@@ -1,13 +1,12 @@
 import contextlib
 import io
-from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Type, TextIO
 
-import pydantic
 import typer
 
-from authub.config import get_settings
+from .config import get_settings
+from .models import get_modules, DatabaseModel
 
 app = typer.Typer()
 settings = get_settings()
@@ -28,7 +27,7 @@ def dev(host: str = settings.host, port: int = settings.port):
         )
         raise typer.Exit(1)
 
-    uvicorn.run("authub.asgi:application", host=host, port=port)
+    uvicorn.run("authub.asgi:application", host=host, port=port, reload=True)
 
 
 @app.command()
@@ -85,11 +84,11 @@ class IndentIO(io.TextIOBase):
 
 
 def _is_model(v):
-    if v is pydantic.BaseModel:
+    if v is DatabaseModel:
         return False
     if not hasattr(v, "schema"):
         return False
-    if not issubclass(v, pydantic.BaseModel):
+    if not issubclass(v, DatabaseModel):
         return False
     return True
 
@@ -107,7 +106,7 @@ def _curley_braces(f: TextIO, text: str = "", semicolon=False) -> TextIO:
         print("}", file=f)
 
 
-def _compile_schema(f: TextIO, v: Type[pydantic.BaseModel], mods_by_type):
+def _compile_schema(f: TextIO, v: Type[DatabaseModel], mods_by_type):
     schema = v.schema()
     inherited_props = set()
     extending = []
@@ -123,6 +122,8 @@ def _compile_schema(f: TextIO, v: Type[pydantic.BaseModel], mods_by_type):
     required = set(schema["required"])
     with _curley_braces(f, f"type {schema['title']}{extending}") as tf:
         for prop, attr in schema["properties"].items():
+            if prop == "id":
+                continue
             if prop in inherited_props:
                 continue
             if prop in required:
@@ -139,7 +140,7 @@ def compile_schema():
     """Update database schema SDL."""
 
     schema_dir = Path("dbschema").resolve().absolute()
-    mods = {ep.name: ep.load() for ep in entry_points()["authub.models"]}
+    mods = get_modules()
     packages = {mod.__name__ for mod in mods.values()}
     mods_by_type = {}
     types_by_mod = {}
@@ -163,3 +164,7 @@ def compile_schema():
                 _compile_schema(mf, v, mods_by_type)
         with (schema_dir / f"{name}.esdl").open("w") as f:
             f.write(buf.getvalue())
+
+
+if __name__ == "__main__":
+    app()

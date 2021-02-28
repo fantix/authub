@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     port: int = 8000
     workers: int = multiprocessing.cpu_count() * 2 + 1
 
+    edgedb_dsn = "authub"
+
     class Config:
         env_prefix = "authub_"
         env_file = os.environ.get("AUTHUB_ENV_FILE", ".env")
