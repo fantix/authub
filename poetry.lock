@@ -202,7 +202,7 @@ name = "typer"
 version = "0.3.2"
 description = "Typer, build great CLIs. Easy to code. Based on Python type hints."
 category = "main"
-optional = false
+optional = true
 python-versions = ">=3.6"
 
 [package.dependencies]
@@ -274,12 +274,12 @@ optional = true
 python-versions = ">=3.6.1"
 
 [extras]
-standalone = ["uvicorn", "gunicorn"]
+standalone = ["typer", "uvicorn", "gunicorn"]
 
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "f87bdc4f37c67d4da2e31bcc1a08bc5e56d4520d4bf8a5881fb2026b003bd956"
+content-hash = "4983a1a70d2f25275fea1b0c03024701e41b2b199d33c2637e7c275790680a84"
 
 [metadata.files]
 appdirs = [

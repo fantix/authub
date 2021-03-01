@@ -9,14 +9,14 @@ license = "BSD-3-Clause"
 python = "^3.9"
 fastapi = "^0.63.0"
 pydantic = {version = "^1.8", extras = ["dotenv"]}
-typer = "^0.3.2"
 edgedb = "^0.13.0"
 
+typer = {version = "^0.3.2", optional = true}
 gunicorn = {version = "^20.0.4", optional = true}
 uvicorn = {version = "^0.13.4", optional = true, extras = ["standard"]}
 
 [tool.poetry.extras]
-standalone = ["uvicorn", "gunicorn"]
+standalone = ["typer", "uvicorn", "gunicorn"]
 
 [tool.poetry.dev-dependencies]
 black = "^20.8b1"
