@@ -1,12 +1,14 @@
 import contextlib
 import io
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Type, TextIO
 
 import typer
 
+from .idp.base import get_idps
 from .config import get_settings
-from .models import get_modules, DatabaseModel
+from .models import DatabaseModel
 
 app = typer.Typer()
 settings = get_settings()
@@ -140,23 +142,33 @@ def compile_schema():
     """Update database schema SDL."""
 
     schema_dir = Path("dbschema").resolve().absolute()
-    mods = get_modules()
-    packages = {mod.__name__ for mod in mods.values()}
+    packages = set()
+    py_mods = []
+
+    for ep in entry_points()["authub.modules"]:
+        py_mod = ep.load()
+        packages.add(py_mod.__name__)
+        py_mods.append((ep.name, py_mod))
+
+    for idp in get_idps().values():
+        py_mods.append((idp.name, idp.module))
+
     mods_by_type = {}
     types_by_mod = {}
-    for name, mod in mods.items():
-        for k in dir(mod):
+    for name, py_mod in py_mods:
+        for k in dir(py_mod):
             if k.startswith("_"):
                 continue
-            v = getattr(mod, k)
+            v = getattr(py_mod, k)
             if not _is_model(v):
                 continue
-            if v.__module__ in packages and v.__module__ != mod.__name__:
+            if v.__module__ in packages and v.__module__ != py_mod.__name__:
                 continue
             if v in mods_by_type:
                 continue
             mods_by_type[v] = name
             types_by_mod.setdefault(name, []).append(v)
+
     for name, types in types_by_mod.items():
         buf = io.StringIO()
         with _curley_braces(buf, f"module {name}", semicolon=True) as mf:

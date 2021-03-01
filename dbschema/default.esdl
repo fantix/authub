@@ -1,5 +1,5 @@
 module default {
-    type IdentityProvider {
+    type IdPClient {
         required property name -> str;
     }
 };

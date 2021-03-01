@@ -1,5 +1,4 @@
 from functools import lru_cache
-from importlib.metadata import entry_points
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -7,7 +6,7 @@ from pydantic import BaseModel
 
 @lru_cache
 def get_modules():
-    return {ep.name: ep.load() for ep in entry_points()["authub.modules"]}
+    return
 
 
 class DatabaseModel(BaseModel):
@@ -21,7 +20,7 @@ class DatabaseModel(BaseModel):
         return cls.construct(**values)
 
 
-class IdentityProvider(DatabaseModel):
+class IdPClient(DatabaseModel):
     name: str
 
 

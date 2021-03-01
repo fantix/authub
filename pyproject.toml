@@ -23,11 +23,12 @@ black = "^20.8b1"
 
 [tool.poetry.plugins."authub.http"]
 idp_base = "authub.idp.base:router"
-google = "authub.idp.google:router"
 
 [tool.poetry.plugins."authub.modules"]
 default = "authub.models"
-google = "authub.idp.google"
+
+[tool.poetry.plugins."authub.idps"]
+google = "authub.idp.google:idp"
 
 [tool.poetry.scripts]
 authub = "authub.cli:app"

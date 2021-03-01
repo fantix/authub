@@ -1,3 +1,6 @@
+from functools import lru_cache
+from importlib import import_module
+from importlib.metadata import entry_points
 from typing import List
 from uuid import UUID
 
@@ -10,29 +13,87 @@ from fastapi import (
     HTTPException,
 )
 from pydantic import BaseModel
+from starlette.routing import get_name
 
 from ..http import get_edgedb_pool
-from ..models import get_modules
-
-router = APIRouter(tags=["IdP"])
 
 
-class ProviderListItem(BaseModel):
-    href: str
+@lru_cache
+def get_idps():
+    rv = {}
+    for ep in entry_points()["authub.idps"]:
+        idp: IdPRouter = ep.load()
+        if ep.name != idp.name:
+            # TODO: warn about mismatching names
+            continue
+        if ep.name not in rv or idp.priority > rv[ep.name].priority:
+            idp.module = import_module(ep.module)
+            rv[ep.name] = idp
+    return rv
+
+
+class IdPRouter(APIRouter):
+    def __init__(self, name: str, priority: int = 100):
+        super().__init__(prefix=f"/{name}", tags=[name.title()])
+        self.name = name
+        self.priority = priority
+        self.description = None
+        self._module = None
+
+    def add_api_route(self, path, endpoint, name=None, **kwargs):
+        name = get_name(endpoint) if name is None else name
+        super().add_api_route(
+            path, endpoint, name=f"{self.name}.{name}", **kwargs
+        )
+
+    def url_path_for(self, name: str, **path_params):
+        return super().url_path_for(f"{self.name}.{name}", **path_params)
+
+    @property
+    def module(self):
+        return self._module
+
+    @module.setter
+    def module(self, module):
+        self._module = module
+        self.description = module.__doc__
+
+
+router = APIRouter(prefix="/idps", tags=["Identity Providers"])
+
+
+class IdP(BaseModel):
     name: str
-    type: str
+    description: str
 
 
 @router.get(
-    "/idps",
-    response_model=List[ProviderListItem],
-    summary="List all configured identity providers.",
+    "/",
+    response_model=List[IdP],
+    summary="List all supported identity providers (IdP).",
 )
-async def get(request: Request, db=Depends(get_edgedb_pool)):
-    mods = get_modules()
+async def list_idps():
+    return [
+        IdP(name=idp.name, description=idp.description)
+        for idp in get_idps().values()
+    ]
+
+
+class IdPClient(BaseModel):
+    href: str
+    name: str
+    idp: str
+
+
+@router.get(
+    "/clients",
+    response_model=List[IdPClient],
+    summary="List all configured IdP clients.",
+)
+async def get_clients(request: Request, db=Depends(get_edgedb_pool)):
     result = await db.query(
         """
-        SELECT IdentityProvider {
+        SELECT IdPClient {
             id,
             name,
             __type__: { name },
@@ -40,30 +101,36 @@ async def get(request: Request, db=Depends(get_edgedb_pool)):
     """
     )
     return [
-        ProviderListItem(
-            href=request.url_for("get_provider", provider_id=obj.id),
+        IdPClient(
+            href=request.url_for(f"{mod}.get_client", idp_client_id=obj.id),
             name=obj.name,
-            type=mods[obj.__type__.name.split("::")[0]].__doc__.split("\n")[0],
+            idp=mod,
         )
-        for obj in result
+        for mod, obj in (
+            (obj.__type__.name.split("::")[0], obj) for obj in result
+        )
     ]
 
 
 @router.delete(
-    "/providers/{provider_id}",
+    "/clients/{idp_client_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={status.HTTP_404_NOT_FOUND: {}},
-    summary="Remove the specified identity provider.",
+    summary="Remove the specified IdP client.",
 )
-async def delete_provider(provider_id: UUID, db=Depends(get_edgedb_pool)):
+async def remove_client(idp_client_id: UUID, db=Depends(get_edgedb_pool)):
     result = await db.query_one(
         """
-        DELETE IdentityProvider
-        FILTER .id = <uuid>$provider_id
+        DELETE IdPClient
+        FILTER .id = <uuid>$id
     """,
-        provider_id=provider_id,
+        id=idp_client_id,
     )
     if result:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     else:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+router.tags = []
+[router.include_router(idp) for idp in get_idps().values()]
