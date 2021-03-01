@@ -130,10 +130,16 @@ def _compile_schema(f: TextIO, v: Type[DatabaseModel], mods_by_type):
                 continue
             if prop in required:
                 tf.write("required ")
-            tf.write("property ")
+            if "type" in attr:
+                tf.write("property ")
+            else:
+                tf.write("link ")
             tf.write(prop)
             tf.write(" -> ")
-            tf.write(_EDB_TYPES[attr["type"]])
+            if "type" in attr:
+                tf.write(_EDB_TYPES[attr["type"]])
+            else:
+                tf.write(attr['$ref'].split('/')[-1])
             print(";", file=tf)
 
 
@@ -172,8 +178,10 @@ def compile_schema():
     for name, types in types_by_mod.items():
         buf = io.StringIO()
         with _curley_braces(buf, f"module {name}", semicolon=True) as mf:
-            for v in types:
+            for i, v in enumerate(types):
                 _compile_schema(mf, v, mods_by_type)
+                if i < len(types) - 1:
+                    print(file=buf)
         with (schema_dir / f"{name}.esdl").open("w") as f:
             f.write(buf.getvalue())
 

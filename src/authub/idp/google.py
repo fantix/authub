@@ -7,12 +7,16 @@ from pydantic import BaseModel
 
 from .base import IdPRouter
 from ..http import get_edgedb_pool
-from ..models import IdPClient, Href
+from ..models import IdPClient, Identity as BaseIdentity, Href
 
 
 class Client(IdPClient):
     client_id: str
     client_secret: str
+
+
+class Identity(BaseIdentity):
+    email: str
 
 
 idp = IdPRouter("google")
