@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from .base import IdPRouter
 from ..http import get_edgedb_pool
 from ..models import IdPClient, Identity as BaseIdentity, Href, User
-from ..orm import ExtendedComputableProperty, ExclusiveConstraint
+from ..orm import ExtendedComputableProperty, ExclusiveConstraint, with_block
 
 
 class Client(IdPClient):
@@ -181,3 +181,60 @@ async def authorize(
         **identity.dict(exclude_unset=True),
     )
     return identity.dict()
+
+
+class IdentityOut(BaseModel):
+    iss: str  # "https://accounts.google.com"
+    hd: str  # "edgedb.com"
+    email: str
+    email_verified: bool
+    name: str
+    picture: str  # URL
+    given_name: str
+    family_name: str
+    locale: str  # "en"
+
+
+@idp.get(
+    "/identities/{identity_id}",
+    response_model=IdentityOut,
+    response_model_exclude_unset=True,
+    response_model_exclude={"user", "client"},
+    summary="Get the profile of the specified Google identity.",
+)
+async def get_identity(identity_id: UUID, db=Depends(get_edgedb_pool)):
+    result = await db.query_one(
+        Identity.select(
+            *IdentityOut.schema()["properties"],
+            filters=".id = <uuid>$id",
+        ),
+        id=identity_id,
+    )
+    return IdentityOut(**Identity.from_obj(result).dict())
+
+
+@idp.patch(
+    "/identities/{identity_id}/utilize",
+    response_model=User,
+    summary="Update the user's profile with the specified Google identity.",
+)
+async def utilize_identity(identity_id: UUID, db=Depends(get_edgedb_pool)):
+    result = await db.query_one(
+        with_block(
+            identity=Identity.select(
+                "user: { id }",
+                "email",
+                "name",
+                filters=".id = <uuid>$identity_id",
+            )
+        )
+        + "SELECT ("
+        + User.construct().update(
+            filters=".id = identity.user.id",
+            email="identity.email",
+            name="identity.name",
+        )
+        + ") { id, email, name }",
+        identity_id=identity_id,
+    )
+    return User.from_obj(result)

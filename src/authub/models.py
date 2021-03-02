@@ -8,7 +8,8 @@ class IdPClient(DatabaseModel):
 
 
 class User(DatabaseModel):
-    pass
+    name: str = None
+    email: str = None
 
 
 class Identity(DatabaseModel):

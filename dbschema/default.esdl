@@ -9,5 +9,7 @@ module default {
     }
 
     type User {
+        property name -> str;
+        property email -> str;
     }
 };

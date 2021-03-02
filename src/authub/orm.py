@@ -68,11 +68,23 @@ class DatabaseModel(BaseModel):
     def from_obj(cls, obj):
         values = {}
         for key in dir(obj):
-            values[key] = getattr(obj, key)
+            value = getattr(obj, key)
+            key_type = cls.__annotations__.get(key)
+            if hasattr(key_type, 'from_obj'):
+                value = key_type.from_obj(value)
+            values[key] = value
         return cls.construct(**values)
 
     @classmethod
-    def select(cls, current_module="default", *expressions, filters=None):
+    def properties(cls, exclude=None):
+        props = cls.edb_schema()["properties"]
+        if exclude:
+            return [prop for prop in props if prop not in exclude]
+        else:
+            return list(props)
+
+    @classmethod
+    def select(cls, *expressions, current_module="default", filters=None):
         buf = io.StringIO()
         schema = cls.edb_schema(current_module)
         buf.write(f"SELECT {schema['title']}")
@@ -138,11 +150,15 @@ class DatabaseModel(BaseModel):
         current_module="default",
         include=None,
         exclude=None,
+        filters=None,
         **extra_values,
     ):
         buf = io.StringIO()
         schema = self.edb_schema(current_module)
-        buf.write(f"UPDATE {schema['title']} SET")
+        buf.write(f"UPDATE {schema['title']}")
+        if filters:
+            buf.write(f" FILTER {filters}")
+        buf.write(" SET")
         self._compile_values(schema, buf, extra_values, include, exclude)
         return buf.getvalue()
 
@@ -211,6 +227,21 @@ class ExtendedComputableProperty(Declaration):
             print(f"USING ({self.expression});", file=inf)
             if self.exclusive:
                 print("constraint exclusive;", file=inf)
+
+
+def with_block(module=None, **expressions):
+    f = io.StringIO()
+    f.write("WITH ")
+    if module:
+        f.write(f"MODULE {module}")
+        if expressions:
+            f.write(", ")
+    for i, (name, exp) in enumerate(expressions.items()):
+        f.write(f"{name} := ({exp})")
+        if i < len(expressions) - 1:
+            f.write(", ")
+    f.write("\n")
+    return f.getvalue()
 
 
 @lru_cache()

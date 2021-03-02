@@ -81,6 +81,7 @@ class IdPClient(BaseModel):
     href: str
     name: str
     idp: str
+    login_uri: str
 
 
 @router.get(
@@ -103,6 +104,7 @@ async def get_clients(request: Request, db=Depends(get_edgedb_pool)):
             href=request.url_for(f"{mod}.get_client", idp_client_id=obj.id),
             name=obj.name,
             idp=mod,
+            login_uri=request.url_for("login", idp_client_id=obj.id),
         )
         for mod, obj in (
             (obj.__type__.name.split("::")[0], obj) for obj in result
@@ -134,6 +136,7 @@ async def remove_client(idp_client_id: UUID, db=Depends(get_edgedb_pool)):
     "/clients/{idp_client_id}/login",
     summary="Login through the specified IdP client.",
     status_code=status.HTTP_302_FOUND,
+    responses={status.HTTP_404_NOT_FOUND: {}},
 )
 async def login(
     idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
