@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     host: str = "localhost"
     port: int = 8000
     workers: int = multiprocessing.cpu_count() * 2 + 1
+    session_secret: str
 
     edgedb_dsn = "authub"
 

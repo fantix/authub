@@ -12,13 +12,14 @@ from fastapi import (
     Response,
     HTTPException,
 )
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from starlette.routing import get_name
 
 from ..http import get_edgedb_pool
 
 
-@lru_cache
+@lru_cache()
 def get_idps():
     rv = {}
     for ep in entry_points()["authub.idps"]:
@@ -45,9 +46,6 @@ class IdPRouter(APIRouter):
         super().add_api_route(
             path, endpoint, name=f"{self.name}.{name}", **kwargs
         )
-
-    def url_path_for(self, name: str, **path_params):
-        return super().url_path_for(f"{self.name}.{name}", **path_params)
 
     @property
     def module(self):
@@ -132,5 +130,33 @@ async def remove_client(idp_client_id: UUID, db=Depends(get_edgedb_pool)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
-router.tags = []
-[router.include_router(idp) for idp in get_idps().values()]
+@router.get(
+    "/clients/{idp_client_id}/login",
+    summary="Login through the specified IdP client.",
+    status_code=status.HTTP_302_FOUND,
+)
+async def login(
+    idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
+):
+    result = await db.query_one(
+        """
+        SELECT IdPClient {
+            __type__: { name },
+        } FILTER .id = <uuid>$id
+    """,
+        id=idp_client_id,
+    )
+    mod = result.__type__.name.split("::")[0]
+    return RedirectResponse(
+        request.url_for(f"{mod}.login", idp_client_id=idp_client_id),
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+def get_router():
+    from ..orm import get_models
+
+    get_models()
+    router.tags = []
+    [router.include_router(idp) for idp in get_idps().values()]
+    return router

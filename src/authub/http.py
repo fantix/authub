@@ -1,8 +1,9 @@
 from importlib.metadata import entry_points
 
 import edgedb
-from fastapi import FastAPI, HTTPException, status, Request
+from fastapi import FastAPI, HTTPException, status, Request, APIRouter
 from fastapi.exception_handlers import http_exception_handler
+from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
 
@@ -14,6 +15,7 @@ def get_edgedb_pool(request: Request):
 def get_http_app():
     settings = get_settings()
     app = FastAPI(debug=settings.debug, title=settings.app_name)
+    app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
 
     @app.on_event("startup")
     async def setup_edgedb_pool():
@@ -32,6 +34,9 @@ def get_http_app():
         )
 
     for ep in entry_points()["authub.http"]:
-        app.include_router(ep.load())
+        router = ep.load()
+        if not isinstance(router, APIRouter):
+            router = router()
+        app.include_router(router)
 
     return app
