@@ -3,7 +3,7 @@ import inspect
 import io
 from functools import lru_cache
 from importlib.metadata import entry_points
-from typing import Type, TextIO, Optional
+from typing import Type, TextIO, Optional, Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ class DatabaseModel(BaseModel):
 
     @classmethod
     @lru_cache()
-    def edb_schema(cls, current_module="default"):
+    def edb_schema(cls, current_module="default", self_only=True):
         schema = cls.schema()
 
         title = schema["title"]
@@ -40,7 +40,7 @@ class DatabaseModel(BaseModel):
             edb_prop = {}
             if prop == "id":
                 continue
-            if prop in inherited_props:
+            if self_only and prop in inherited_props:
                 continue
             if prop in required:
                 edb_prop["required"] = True
@@ -52,6 +52,8 @@ class DatabaseModel(BaseModel):
                 edb_prop["type"] = _EDB_TYPES[attr["type"]]
             else:
                 edb_prop["type"] = attr["$ref"].split("/")[-1]
+            if "constraint" in attr:
+                edb_prop["constraint"] = attr["constraint"]
             props[prop] = edb_prop
         return {
             "title": title,
@@ -70,18 +72,10 @@ class DatabaseModel(BaseModel):
         for key in dir(obj):
             value = getattr(obj, key)
             key_type = cls.__annotations__.get(key)
-            if hasattr(key_type, 'from_obj'):
+            if hasattr(key_type, "from_obj"):
                 value = key_type.from_obj(value)
             values[key] = value
         return cls.construct(**values)
-
-    @classmethod
-    def properties(cls, exclude=None):
-        props = cls.edb_schema()["properties"]
-        if exclude:
-            return [prop for prop in props if prop not in exclude]
-        else:
-            return list(props)
 
     @classmethod
     def select(cls, *expressions, current_module="default", filters=None):
@@ -129,7 +123,7 @@ class DatabaseModel(BaseModel):
         **extra_values,
     ):
         buf = io.StringIO()
-        schema = self.edb_schema(current_module)
+        schema = self.edb_schema(current_module, self_only=False)
         buf.write(f"INSERT {schema['title']}")
         if (
             not self._compile_values(schema, buf, extra_values, include)
@@ -154,7 +148,7 @@ class DatabaseModel(BaseModel):
         **extra_values,
     ):
         buf = io.StringIO()
-        schema = self.edb_schema(current_module)
+        schema = self.edb_schema(current_module, self_only=False)
         buf.write(f"UPDATE {schema['title']}")
         if filters:
             buf.write(f" FILTER {filters}")
@@ -244,6 +238,18 @@ def with_block(module=None, **expressions):
     return f.getvalue()
 
 
+ActualType = TypeVar("ActualType")
+
+
+def prop(type_: Type[ActualType], **kwargs) -> Type[ActualType]:
+    class _Type(type_):
+        @classmethod
+        def __modify_schema__(cls, field_schema):
+            field_schema.update(kwargs)
+
+    return _Type
+
+
 @lru_cache()
 def get_models():
     from .idp.base import get_idps
@@ -317,7 +323,14 @@ def _compile_schema(f: TextIO, v: Type[DatabaseModel]):
         for prop, attr in schema["properties"].items():
             if attr.get("required"):
                 tf.write("required ")
-            print(f"{attr['declaration']} {prop} -> {attr['type']};", file=tf)
+            tf.write(f"{attr['declaration']} {prop} -> {attr['type']}")
+            if "constraint" in attr:
+                with _curley_braces(tf, semicolon=True) as af:
+                    af.write("constraint ")
+                    af.write(attr["constraint"])
+                    print(";", file=af)
+            else:
+                print(";", file=tf)
         for dec in schema["declarations"]:
             dec.compile(tf)
 

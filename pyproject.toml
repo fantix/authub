@@ -33,6 +33,7 @@ default = "authub.models"
 
 [tool.poetry.plugins."authub.idps"]
 google = "authub.idp.google:idp"
+github = "authub.idp.github:idp"
 
 [tool.poetry.scripts]
 authub = "authub.cli:app"

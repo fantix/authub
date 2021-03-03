@@ -15,8 +15,11 @@ from fastapi import (
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from starlette.routing import get_name
+from authlib.integrations.starlette_client import OAuth
 
 from ..http import get_edgedb_pool
+
+oauth = OAuth()
 
 
 @lru_cache()

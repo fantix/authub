@@ -1,12 +1,11 @@
-"""Google OAuth 2.0 identity provider."""
+"""Google OpenID Connect identity provider."""
 
 from uuid import UUID
 
-from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends, status, Request
 from pydantic import BaseModel
 
-from .base import IdPRouter
+from .base import IdPRouter, oauth
 from ..http import get_edgedb_pool
 from ..models import IdPClient, Identity as BaseIdentity, Href, User
 from ..orm import ExtendedComputableProperty, ExclusiveConstraint, with_block
@@ -59,7 +58,7 @@ class GoogleClientOut(BaseModel):
     "/clients/{idp_client_id}",
     response_model=GoogleClientOut,
     responses={status.HTTP_404_NOT_FOUND: {}},
-    summary="Get details of the specified Google OAuth 2.0 client.",
+    summary="Get details of the specified Google OIDC client.",
 )
 async def get_client(
     idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
@@ -91,7 +90,7 @@ class GoogleClientIn(BaseModel):
     "/clients",
     response_model=Href,
     status_code=status.HTTP_201_CREATED,
-    summary="Configure a new Google OAuth 2.0 client.",
+    summary="Configure a new Google OIDC client.",
 )
 async def add_client(
     client: GoogleClientIn, request: Request, db=Depends(get_edgedb_pool)
@@ -111,30 +110,20 @@ async def add_client(
     )
 
 
-oauth = OAuth()
-
-
-@idp.get(
-    "/clients/{idp_client_id}/login",
-    summary="Login through the specified Google OAuth 2.0 client.",
-    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-)
-async def login(
-    idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
-):
-    result = await db.query_one(
-        """
-        SELECT google::Client {
-            client_id,
-            client_secret,
-        } FILTER .id = <uuid>$id
-    """,
-        id=idp_client_id,
-    )
-    client = Client.from_obj(result)
+async def _get_google_client(db, idp_client_id):
     try:
         client = getattr(oauth, idp_client_id.hex)
     except AttributeError:
+        result = await db.query_one(
+            """
+            SELECT google::Client {
+                client_id,
+                client_secret,
+            } FILTER .id = <uuid>$id
+        """,
+            id=idp_client_id,
+        )
+        client = Client.from_obj(result)
         client = oauth.register(
             name=idp_client_id.hex,
             server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
@@ -142,7 +131,19 @@ async def login(
             client_secret=client.client_secret,
             client_kwargs={"scope": "openid email profile"},
         )
-    return await client.authorize_redirect(
+    return client
+
+
+@idp.get(
+    "/clients/{idp_client_id}/login",
+    summary="Login through the specified Google OIDC client.",
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+)
+async def login(
+    idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
+):
+    google_client = await _get_google_client(db, idp_client_id)
+    return await google_client.authorize_redirect(
         request,
         request.url_for(f"{idp.name}.authorize", idp_client_id=idp_client_id),
     )
@@ -150,12 +151,12 @@ async def login(
 
 @idp.get(
     "/clients/{idp_client_id}/authorize",
-    summary="Google OAuth 2.0 redirect URI.",
+    summary="Google OIDC redirect URI.",
 )
 async def authorize(
     idp_client_id: UUID, request: Request, db=Depends(get_edgedb_pool)
 ):
-    google_client = getattr(oauth, idp_client_id.hex)
+    google_client = await _get_google_client(db, idp_client_id)
     token = await google_client.authorize_access_token(request)
     user = await google_client.parse_id_token(request, token)
     identity = Identity.construct(**token, **user)
