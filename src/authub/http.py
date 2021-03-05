@@ -36,7 +36,7 @@ def get_http_app():
     for ep in entry_points()["authub.http"]:
         router = ep.load()
         if not isinstance(router, APIRouter):
-            router = router()
+            router = router(app)
         app.include_router(router)
 
     return app

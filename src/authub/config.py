@@ -16,6 +16,9 @@ class Settings(BaseSettings):
 
     edgedb_dsn = "authub"
 
+    token_expires_in: int = 86400
+    authorization_code_expires_in: int = 300
+
     class Config:
         env_prefix = "authub_"
         env_file = os.environ.get("AUTHUB_ENV_FILE", ".env")

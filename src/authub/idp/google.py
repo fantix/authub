@@ -175,13 +175,18 @@ async def authorize(
         client_id=idp_client_id,
         **identity.dict(exclude={"nonce"}, exclude_unset=True),
     )
-    identity = Identity(
-        id=result.id,
-        user=User.from_obj(result.user),
-        client=Client.from_obj(result.client),
-        **identity.dict(exclude_unset=True),
-    )
-    return identity.dict()
+    if "client_id" in request.session:
+        from authub.oauth2 import oauth2_authorized
+
+        return await oauth2_authorized(request, User.from_obj(result.user))
+    else:
+        identity = Identity(
+            id=result.id,
+            user=User.from_obj(result.user),
+            client=Client.from_obj(result.client),
+            **identity.dict(exclude_unset=True),
+        )
+        return identity.dict()
 
 
 class IdentityOut(BaseModel):

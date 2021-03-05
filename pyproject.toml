@@ -13,6 +13,8 @@ edgedb = "^0.13.0"
 Authlib = "^0.15.3"
 httpx = "^0.17.0"
 itsdangerous = "^1.1.0"
+aioauth = "^0.1.6"
+python-multipart = "^0.0.5"
 
 typer = {version = "^0.3.2", optional = true}
 gunicorn = {version = "^20.0.4", optional = true}
@@ -26,10 +28,12 @@ black = "^20.8b1"
 
 [tool.poetry.plugins."authub.http"]
 idp_base = "authub.idp.base:get_router"
-user = "authub.user:router"
+user = "authub.user:get_router"
+oauth2 = "authub.oauth2:get_router"
 
 [tool.poetry.plugins."authub.modules"]
 default = "authub.models"
+oauth2 = "authub.oauth2"
 
 [tool.poetry.plugins."authub.idps"]
 google = "authub.idp.google:idp"

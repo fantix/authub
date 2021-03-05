@@ -4,9 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, status, HTTPException
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from .http import get_edgedb_pool
 from .models import User, Identity
+from .oauth2 import OAuth2Backend
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -109,3 +111,8 @@ async def utilize_identity(
     return await _redirect_identity(
         db, identity_id, request, "utilize_identity"
     )
+
+
+def get_router(app):
+    app.add_middleware(AuthenticationMiddleware, backend=OAuth2Backend())
+    return router

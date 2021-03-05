@@ -159,7 +159,7 @@ async def login(
     )
 
 
-def get_router():
+def get_router(app):
     from ..orm import get_models
 
     get_models()

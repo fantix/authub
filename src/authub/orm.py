@@ -1,14 +1,20 @@
 import contextlib
 import inspect
 import io
+from enum import Enum
 from functools import lru_cache
 from importlib.metadata import entry_points
-from typing import Type, TextIO, Optional, Generic, TypeVar
+from typing import Type, TextIO, Optional, TypeVar, List, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
 
-_EDB_TYPES = {"string": "str", "boolean": "bool", "integer": "int64"}
+_EDB_TYPES = {
+    "string": "str",
+    "boolean": "bool",
+    "integer": "int64",
+    "array": "array",
+}
 
 
 class DatabaseModel(BaseModel):
@@ -20,6 +26,25 @@ class DatabaseModel(BaseModel):
     @lru_cache()
     def edb_schema(cls, current_module="default", self_only=True):
         schema = cls.schema()
+
+        def _get_type(attr):
+            if "type" in attr:
+                return _EDB_TYPES[attr["type"]]
+            else:
+                rv = attr["$ref"].split("/")[-1]
+                mod_name = schema["definitions"][rv].get(
+                    "module", current_module
+                )
+                if mod_name != current_module:
+                    rv = f"{mod_name}::{rv}"
+                return rv
+
+        def _is_link(attr):
+            if "type" in attr:
+                return False
+            else:
+                type_ = attr["$ref"].split("/")[-1]
+                return schema["definitions"][type_]["type"] == "object"
 
         title = schema["title"]
         module = cls.__edb_module__ or "default"
@@ -36,30 +61,37 @@ class DatabaseModel(BaseModel):
             parents.append(p_schema["title"])
         required = set(schema.get("required", []))
         props = {}
-        for prop, attr in schema["properties"].items():
+        for name, attr in schema["properties"].items():
             edb_prop = {}
-            if prop == "id":
+            if name == "id":
                 continue
-            if self_only and prop in inherited_props:
+            if self_only and name in inherited_props:
                 continue
-            if prop in required:
+            if name in required:
                 edb_prop["required"] = True
-            if "type" in attr:
-                edb_prop["declaration"] = "property"
-            else:
+            if _is_link(attr):
                 edb_prop["declaration"] = "link"
-            if "type" in attr:
-                edb_prop["type"] = _EDB_TYPES[attr["type"]]
             else:
-                edb_prop["type"] = attr["$ref"].split("/")[-1]
+                edb_prop["declaration"] = "property"
+            edb_prop["type"] = _get_type(attr)
+            if "items" in attr:
+                edb_prop["items"] = {"type": _get_type(attr["items"])}
             if "constraint" in attr:
                 edb_prop["constraint"] = attr["constraint"]
-            props[prop] = edb_prop
+            props[name] = edb_prop
+        definitions = {}
+        for definition in schema.get("definitions", {}).values():
+            if "enum" in definition:
+                definitions[definition["title"]] = {
+                    "enum": definition["enum"],
+                    "type": _EDB_TYPES[definition["type"]],
+                }
         return {
             "title": title,
             "parents": parents,
             "properties": props,
             "declarations": cls.__declarations__,
+            "definitions": definitions,
         }
 
     @classmethod
@@ -74,6 +106,18 @@ class DatabaseModel(BaseModel):
             key_type = cls.__annotations__.get(key)
             if hasattr(key_type, "from_obj"):
                 value = key_type.from_obj(value)
+            elif get_origin(key_type) is list:
+                sub_type = get_args(key_type)[0]
+                if issubclass(type(sub_type), type) and issubclass(
+                    sub_type, Enum
+                ):
+                    value = [sub_type(str(val)) for val in value]
+                else:
+                    value = [val for val in value]
+            elif issubclass(type(key_type), type) and issubclass(
+                key_type, Enum
+            ):
+                value = key_type(str(value))
             values[key] = value
         return cls.construct(**values)
 
@@ -97,19 +141,24 @@ class DatabaseModel(BaseModel):
         self, schema, buf, extra_values, include, exclude=None
     ):
         d = self.dict(
-            include=include or schema["properties"],
+            include=include or set(schema["properties"]),
             exclude=exclude,
             exclude_unset=True,
         )
         if d or extra_values:
             with _curley_braces(buf) as inf:
-                for prop, value in d.items():
-                    if prop in extra_values:
+                for name, value in d.items():
+                    if name in extra_values:
                         continue
-                    attr = schema["properties"][prop]
-                    print(f"{prop} := <{attr['type']}>${prop},", file=inf)
-                for prop, value in extra_values.items():
-                    print(f"{prop} := ({value}),", file=inf)
+                    attr = schema["properties"][name]
+                    type_ = attr["type"]
+                    if type_ == "array" and "items" in attr:
+                        type_ = f"<array<{attr['items']['type']}>><array<str>>"
+                    else:
+                        type_ = f"<{type_}>"
+                    print(f"{name} := {type_}${name},", file=inf)
+                for name, value in extra_values.items():
+                    print(f"{name} := ({value}),", file=inf)
             return True
         else:
             return False
@@ -156,6 +205,11 @@ class DatabaseModel(BaseModel):
         self._compile_values(schema, buf, extra_values, include, exclude)
         return buf.getvalue()
 
+    class Config:
+        @staticmethod
+        def schema_extra(schema, model):
+            schema["module"] = model.__edb_module__
+
 
 class Declaration:
     def __init__(self):
@@ -183,7 +237,7 @@ class Constraint(Declaration):
 
 class ExclusiveConstraint(Constraint):
     def __init__(self, *properties):
-        props_str = ", ".join((f".{prop}" for prop in properties))
+        props_str = ", ".join((f".{name}" for name in properties))
         if len(properties) > 1:
             props_str = f"({props_str})"
         super().__init__("exclusive", props_str)
@@ -314,16 +368,31 @@ def _curley_braces(f: TextIO, text: str = "", semicolon=False) -> TextIO:
         print("}", file=f)
 
 
+def _compile_definitions(f: TextIO, models: List[Type[DatabaseModel]]):
+    definitions = {}
+    for v in models:
+        schema = v.edb_schema(v.__edb_module__)
+        for name, definition in schema["definitions"].items():
+            definitions[name] = definition
+    for name, definition in definitions.items():
+        choices = ", ".join((str(val) for val in definition["enum"]))
+        print(f"scalar type {name} extending enum<{choices}>;", file=f)
+    if definitions:
+        print(file=f)
+
+
 def _compile_schema(f: TextIO, v: Type[DatabaseModel]):
     schema = v.edb_schema(v.__edb_module__)
     extending = ""
     if schema["parents"]:
         extending = " extending " + ", ".join(schema["parents"])
     with _curley_braces(f, f"type {schema['title']}{extending}") as tf:
-        for prop, attr in schema["properties"].items():
+        for name, attr in schema["properties"].items():
             if attr.get("required"):
                 tf.write("required ")
-            tf.write(f"{attr['declaration']} {prop} -> {attr['type']}")
+            tf.write(f"{attr['declaration']} {name} -> {attr['type']}")
+            if "items" in attr:
+                tf.write(f"<{attr['items']['type']}>")
             if "constraint" in attr:
                 with _curley_braces(tf, semicolon=True) as af:
                     af.write("constraint ")
@@ -349,6 +418,7 @@ def compile_schema(schema_dir):
         with _curley_braces(
             buf, f"module {module_name}", semicolon=True
         ) as mf:
+            _compile_definitions(mf, models)
             for i, v in enumerate(models):
                 _compile_schema(mf, v)
                 if i < len(models) - 1:
